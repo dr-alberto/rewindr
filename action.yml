@@ -1,0 +1,11 @@
+name: rewindr
+
+inputs:
+  github-token:
+    description: "The GITHUB_TOKEN to query job status"
+    required: true
+    default: ${{ github.token }}
+runs:
+  using: "node24"
+  main: "src/main.js"
+  post: "src/post.js"

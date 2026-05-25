@@ -1,0 +1,13 @@
+name: My Workflow
+on: push
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+
+      - name: Run broken test
+        run: |
+          echo "Generating critical error..."
+          exit 1
