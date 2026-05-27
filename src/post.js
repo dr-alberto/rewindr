@@ -1,52 +1,77 @@
 import * as core from "@actions/core";
-import * as github from "@actions/github";
+import { DefaultArtifactClient } from "@actions/artifact";
+import * as exec from "@actions/exec";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 async function run() {
   try {
-    core.info("[rewindr] Job finalized. Evaluating state of the pipeline...");
+    // post-if: failure() in action.yml guarantees we only run when the job
+    // has failed — no API calls or extra permissions needed.
+    core.error("[rewindr] A failure has been detected in the CI environment!");
+    core.info("[rewindr] Starting state freeze sequence...");
 
-    const token = core.getInput("github-token");
-    const octokit = github.getOctokit(token);
-    const context = github.context;
-
-    // 1. Query the "live" status of this run's jobs from the GitHub API
-    const {
-      data: { jobs },
-    } = await octokit.rest.actions.listJobsForWorkflowRun({
-      owner: context.repo.owner,
-      repo: context.repo.repo,
-      run_id: context.runId,
-    });
-
-    // 2. Find the current job (filtering by the context's internal ID)
-    const currentJob = jobs.find(
-      (j) => j.status === "in_progress" && j.name.includes(context.job),
-    );
-
-    if (!currentJob) {
-      core.warning(
-        "[rewindr] Could not determine the current job's status from the API.",
-      );
-      return;
+    const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
+    const dumpDir = path.join(workspace, "rewindr_dump");
+    if (!fs.existsSync(dumpDir)) {
+      fs.mkdirSync(dumpDir);
     }
 
-    // 3. Check whether any previous step failed
-    const hasFailedStep = currentJob.steps.some(
-      (step) => step.conclusion === "failure",
+    // 1. Dump environment variables
+    core.info("[rewindr] Dumping environment variables...");
+    const envData = Object.entries(process.env)
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n");
+    fs.writeFileSync(path.join(dumpDir, "env_dump.txt"), envData);
+
+    // 2. Dump GitHub context
+    core.info("[rewindr] Dumping GitHub context...");
+    const context = {
+      runId: process.env.GITHUB_RUN_ID,
+      runNumber: process.env.GITHUB_RUN_NUMBER,
+      job: process.env.GITHUB_JOB,
+      workflow: process.env.GITHUB_WORKFLOW,
+      actor: process.env.GITHUB_ACTOR,
+      repository: process.env.GITHUB_REPOSITORY,
+      ref: process.env.GITHUB_REF,
+      sha: process.env.GITHUB_SHA,
+      eventName: process.env.GITHUB_EVENT_NAME,
+    };
+    fs.writeFileSync(
+      path.join(dumpDir, "github_context.json"),
+      JSON.stringify(context, null, 2),
     );
 
-    if (hasFailedStep) {
-      core.error(
-        "[rewindr] A failure has been detected in the CI environment!",
-      );
-      core.info("[rewindr] Starting state freeze sequence (Phase 1.2)...");
+    // 3. Compress workspace (excluding rewindr_dump to avoid recursion)
+    core.info("[rewindr] Compressing workspace...");
+    const tarPath = path.join(dumpDir, "workspace_dump.tar.gz");
+    await exec.exec("tar", [
+      "-czf",
+      tarPath,
+      "--exclude=rewindr_dump",
+      "-C",
+      workspace,
+      ".",
+    ]);
 
-      // future code here
-    } else {
-      core.info(
-        "[rewindr] The job finished successfully. No state capture required.",
-      );
-    }
+    // 4. Upload artifact
+    core.info("[rewindr] Uploading state artifact...");
+    const artifactClient = new DefaultArtifactClient();
+    const runId = process.env.GITHUB_RUN_ID;
+    const job = process.env.GITHUB_JOB;
+    const artifactName = `rewindr-state-${runId}-${job}`;
+
+    await artifactClient.uploadArtifact(
+      artifactName,
+      [
+        path.join(dumpDir, "env_dump.txt"),
+        path.join(dumpDir, "github_context.json"),
+        tarPath,
+      ],
+      dumpDir,
+    );
+
+    core.info(`[rewindr] State artifact uploaded: ${artifactName}`);
   } catch (error) {
     core.warning(
       `[rewindr] Error during post-execution phase: ${error.message}`,

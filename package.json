@@ -11,7 +11,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@actions/artifact": "^6.2.1",
     "@actions/core": "^3.0.1",
+    "@actions/exec": "^3.0.0",
     "@actions/github": "^3.0.0"
   }
 }
