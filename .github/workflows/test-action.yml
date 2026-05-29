@@ -8,6 +8,7 @@ jobs:
       - uses: ./
 
       - name: Run broken test
-        run: |
-          echo "Generating critical error..."
-          exit 1
+        run: "Running something very important"
+        # run: |
+        #   echo "Generating critical error..."
+        #   exit 1
