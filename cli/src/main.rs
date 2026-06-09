@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand, Args};
 mod commands;
+mod auth;
 
 /// rewindr CLI
 #[derive(Parser)]
@@ -37,7 +38,10 @@ enum Command {
   Download(DownloadArgs),
   
   /// Setup the environment locally
-  Play
+  Play,
+
+  /// Authenticate with GitHub and store a token
+  Login
 }
 
 
@@ -48,5 +52,6 @@ fn main() {
       Command::List(args)=>commands::list::run(args.limit, args.workflow),
       Command::Download(args)=>commands::download::run(args.id, args.out),
       Command::Play=>commands::play::run(),
+      Command::Login=>commands::login::run(),
     }
 }
