@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand, Args};
 mod commands;
 mod auth;
+mod github;
 
 /// rewindr CLI
 #[derive(Parser)]
@@ -12,11 +13,14 @@ struct Cli {
 
 #[derive(Args)]
 struct ListArgs {
-  #[arg(short, long, help="Maximum number of results")]
-  limit: Option<i32>,
+  #[arg(short, long, default_value_t = 20, help="Maximum number of runs to show")]
+  limit: u32,
 
-  #[arg(short, long, help="Filter results by workflow")]
-  workflow: Option<String>
+  #[arg(short, long, help="Filter runs by workflow file (e.g. ci.yml)")]
+  workflow: Option<String>,
+
+  #[arg(short, long, help="Repository as owner/repo (auto-detected from git if omitted)")]
+  repo: Option<String>
 }
 
 #[derive(Args)]
@@ -49,7 +53,7 @@ fn main() {
     let command = Cli::parse();
 
     match command.command{
-      Command::List(args)=>commands::list::run(args.limit, args.workflow),
+      Command::List(args)=>commands::list::run(args.limit, args.workflow, args.repo),
       Command::Download(args)=>commands::download::run(args.id, args.out),
       Command::Play=>commands::play::run(),
       Command::Login=>commands::login::run(),

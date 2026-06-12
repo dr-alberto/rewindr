@@ -12,12 +12,6 @@ pub struct Config {
     pub github_token: Option<String>,
 }
 
-/// A GitHub user, as returned by `GET /user`.
-#[derive(Deserialize)]
-pub struct GithubUser {
-    pub login: String,
-}
-
 /// Path to the config file: `<config_dir>/rewindr/config.json`.
 fn config_path() -> Result<PathBuf, String> {
     let dir = dirs::config_dir().ok_or("could not determine the OS config directory")?;
@@ -70,21 +64,6 @@ pub fn token() -> Result<Option<String>, String> {
 }
 
 /// Validate a token by calling `GET /user`, returning the authenticated user.
-pub fn fetch_user(token: &str) -> Result<GithubUser, String> {
-    let client = reqwest::blocking::Client::new();
-    let response = client
-        .get("https://api.github.com/user")
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "rewindr-cli")
-        .send()
-        .map_err(|e| format!("request failed: {e}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!("GitHub returned {}", response.status()));
-    }
-
-    response
-        .json::<GithubUser>()
-        .map_err(|e| format!("decoding response: {e}"))
+pub fn fetch_user(token: &str) -> Result<crate::github::User, String> {
+    crate::github::Client::new(token.to_string()).get("/user", &[])
 }
