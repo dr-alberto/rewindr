@@ -1,10 +1,7 @@
 use std::collections::HashMap;
 
 use crate::auth;
-use crate::github::{self, Client};
-
-/// Only artifacts whose name starts with this prefix are rewindr environments.
-const ARTIFACT_PREFIX: &str = "rewindr";
+use crate::github::{self, ARTIFACT_PREFIX, Client};
 
 /// Runs and artifacts are fetched a page at a time; this is GitHub's maximum.
 const PER_PAGE: &str = "100";

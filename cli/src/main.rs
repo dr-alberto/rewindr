@@ -25,10 +25,13 @@ struct ListArgs {
 
 #[derive(Args)]
 struct DownloadArgs {
-  #[arg(short, long, help="ID of the item to download")]
-  id: Option<String>,
+  #[arg(help="Workflow run ID to download the rewindr artifact from")]
+  run_id: u64,
 
-  #[arg(short, long, help="Output file path")]
+  #[arg(short, long, help="Repository as owner/repo (auto-detected from git if omitted)")]
+  repo: Option<String>,
+
+  #[arg(short, long, help="Output directory (default: rewindr-artifacts/<run-id>)")]
   out: Option<String>
 }
 
@@ -54,7 +57,7 @@ fn main() {
 
     match command.command{
       Command::List(args)=>commands::list::run(args.limit, args.workflow, args.repo),
-      Command::Download(args)=>commands::download::run(args.id, args.out),
+      Command::Download(args)=>commands::download::run(args.run_id, args.repo, args.out),
       Command::Play=>commands::play::run(),
       Command::Login=>commands::login::run(),
     }

@@ -6,6 +6,9 @@ use serde::de::DeserializeOwned;
 const API_BASE: &str = "https://api.github.com";
 const USER_AGENT: &str = "rewindr-cli";
 
+/// Only artifacts whose name starts with this prefix are rewindr environments.
+pub const ARTIFACT_PREFIX: &str = "rewindr";
+
 /// An authenticated GitHub REST client.
 pub struct Client {
     http: reqwest::blocking::Client,
@@ -20,14 +23,19 @@ impl Client {
         }
     }
 
-    /// Perform an authenticated GET and decode the JSON response.
-    pub fn get<T: DeserializeOwned>(&self, path: &str, params: &[(&str, &str)]) -> Result<T, String> {
-        let response = self
-            .http
+    /// Build an authenticated GET request with the common GitHub headers.
+    fn request(&self, path: &str) -> reqwest::blocking::RequestBuilder {
+        self.http
             .get(format!("{API_BASE}{path}"))
             .header("Authorization", format!("Bearer {}", self.token))
             .header("Accept", "application/vnd.github+json")
             .header("User-Agent", USER_AGENT)
+    }
+
+    /// Perform an authenticated GET and decode the JSON response.
+    pub fn get<T: DeserializeOwned>(&self, path: &str, params: &[(&str, &str)]) -> Result<T, String> {
+        let response = self
+            .request(path)
             .query(params)
             .send()
             .map_err(|e| format!("request failed: {e}"))?;
@@ -39,6 +47,26 @@ impl Client {
         response
             .json::<T>()
             .map_err(|e| format!("decoding response: {e}"))
+    }
+
+    /// Perform an authenticated GET and return the raw response bytes.
+    ///
+    /// Used for artifact downloads, where GitHub responds with a redirect to a
+    /// zip that the blocking client follows automatically.
+    pub fn get_bytes(&self, path: &str) -> Result<Vec<u8>, String> {
+        let response = self
+            .request(path)
+            .send()
+            .map_err(|e| format!("request failed: {e}"))?;
+
+        if !response.status().is_success() {
+            return Err(format!("GitHub returned {}", response.status()));
+        }
+
+        response
+            .bytes()
+            .map(|b| b.to_vec())
+            .map_err(|e| format!("reading response body: {e}"))
     }
 }
 
@@ -72,6 +100,7 @@ pub struct Artifacts {
 
 #[derive(Deserialize)]
 pub struct Artifact {
+    pub id: u64,
     pub name: String,
     pub workflow_run: Option<ArtifactRun>,
 }
