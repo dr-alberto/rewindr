@@ -36,6 +36,19 @@ struct DownloadArgs {
 }
 
 
+#[derive(Args)]
+struct PlayArgs {
+  #[arg(help="Extracted artifact directory (default: newest under ./rewindr-artifacts)")]
+  dir: Option<String>,
+
+  #[arg(short, long, help="Base Docker image (default: inferred from the runner image)")]
+  image: Option<String>,
+
+  #[arg(long, help="Prepare the environment and print the docker command without entering it")]
+  build_only: bool
+}
+
+
 #[derive(Subcommand)]
 enum Command {
   /// List available items
@@ -43,9 +56,9 @@ enum Command {
 
   /// Download an environment
   Download(DownloadArgs),
-  
-  /// Setup the environment locally
-  Play,
+
+  /// Rebuild and enter a captured environment in Docker
+  Play(PlayArgs),
 
   /// Authenticate with GitHub and store a token
   Login
@@ -58,7 +71,7 @@ fn main() {
     match command.command{
       Command::List(args)=>commands::list::run(args.limit, args.workflow, args.repo),
       Command::Download(args)=>commands::download::run(args.run_id, args.repo, args.out),
-      Command::Play=>commands::play::run(),
+      Command::Play(args)=>commands::play::run(args.dir, args.image, args.build_only),
       Command::Login=>commands::login::run(),
     }
 }
