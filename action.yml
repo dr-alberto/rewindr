@@ -5,6 +5,10 @@ inputs:
     description: "The GITHUB_TOKEN to use for uploading artifacts"
     required: true
     default: ${{ github.token }}
+  secrets:
+    description: "Pass `${{ toJSON(secrets) }}` so rewindr can redact secret values from the captured environment. If omitted, environment variables are not captured."
+    required: false
+    default: ""
 runs:
   using: "node24"
   main: "src/main.js"

@@ -6,6 +6,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./
+        with:
+          # Lets rewindr redact secret values from the captured environment.
+          secrets: ${{ toJSON(secrets) }}
 
       - name: Run broken test
         run: echo "Running something very important"

@@ -4,6 +4,13 @@ import * as exec from "@actions/exec";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+/// Bump when the artifact layout changes so the CLI can reject what it can't read.
+const SCHEMA_VERSION = 1;
+
+/// Values shorter than this can't be redacted by substring match without
+/// shredding unrelated text, so we don't capture env when a secret is that short.
+const MIN_SECRET_LENGTH = 4;
+
 async function run() {
   try {
     // post-if: failure() in action.yml guarantees we only run when the job
@@ -17,32 +24,17 @@ async function run() {
       fs.mkdirSync(dumpDir);
     }
 
-    // 1. Dump environment variables
+    // 1. Dump the environment — only if the caller declared their secrets so we
+    //    can scrub them. Without that we capture nothing, to never leak.
     core.info("[rewindr] Dumping environment variables...");
-    const envData = Object.entries(process.env)
-      .map(([key, value]) => `${key}=${value}`)
-      .join("\n");
-    fs.writeFileSync(path.join(dumpDir, "env_dump.txt"), envData);
-
-    // 2. Dump GitHub context
-    core.info("[rewindr] Dumping GitHub context...");
-    const context = {
-      runId: process.env.GITHUB_RUN_ID,
-      runNumber: process.env.GITHUB_RUN_NUMBER,
-      job: process.env.GITHUB_JOB,
-      workflow: process.env.GITHUB_WORKFLOW,
-      actor: process.env.GITHUB_ACTOR,
-      repository: process.env.GITHUB_REPOSITORY,
-      ref: process.env.GITHUB_REF,
-      sha: process.env.GITHUB_SHA,
-      eventName: process.env.GITHUB_EVENT_NAME,
-    };
+    const secrets = secretValues();
+    const envCaptured = secrets !== null;
     fs.writeFileSync(
-      path.join(dumpDir, "github_context.json"),
-      JSON.stringify(context, null, 2),
+      path.join(dumpDir, "env_dump.txt"),
+      envCaptured ? renderEnv(secrets) : ENV_SKIPPED_NOTICE,
     );
 
-    // 3. Compress workspace (excluding rewindr_dump to avoid recursion)
+    // 2. Compress the workspace (excluding our own dump to avoid recursion).
     core.info("[rewindr] Compressing workspace...");
     const tarPath = path.join(dumpDir, "workspace_dump.tar.gz");
     await exec.exec("tar", [
@@ -54,18 +46,32 @@ async function run() {
       ".",
     ]);
 
-    // 4. Upload artifact
-    core.info("[rewindr] Uploading state artifact...");
-    const artifactClient = new DefaultArtifactClient();
-    const runId = process.env.GITHUB_RUN_ID;
-    const job = process.env.GITHUB_JOB;
-    const artifactName = `rewindr-state-${runId}-${job}`;
+    // 3. Write the manifest the CLI reads to rebuild the environment.
+    core.info("[rewindr] Writing manifest...");
+    const manifest = buildManifest(envCaptured);
+    fs.writeFileSync(
+      path.join(dumpDir, "rewindr.json"),
+      JSON.stringify(manifest, null, 2),
+    );
 
+    // github_context.json is a subset of the manifest, kept so the current CLI
+    // (which still reads it) accepts these artifacts. Removed once the CLI reads
+    // the manifest instead.
+    fs.writeFileSync(
+      path.join(dumpDir, "github_context.json"),
+      JSON.stringify(legacyContext(manifest), null, 2),
+    );
+
+    // 4. Upload everything as a single artifact.
+    core.info("[rewindr] Uploading state artifact...");
+    const artifactName = `rewindr-state-${manifest.runId}-${manifest.job}`;
+    const artifactClient = new DefaultArtifactClient();
     await artifactClient.uploadArtifact(
       artifactName,
       [
-        path.join(dumpDir, "env_dump.txt"),
+        path.join(dumpDir, "rewindr.json"),
         path.join(dumpDir, "github_context.json"),
+        path.join(dumpDir, "env_dump.txt"),
         tarPath,
       ],
       dumpDir,
@@ -78,4 +84,113 @@ async function run() {
     );
   }
 }
+
+const ENV_SKIPPED_NOTICE =
+  "# Environment variables were not captured.\n" +
+  "# Add `secrets: ${{ toJSON(secrets) }}` to the rewindr action to capture\n" +
+  "# them with all secret values redacted.\n";
+
+/// The set of secret strings to scrub, taken from the `secrets` input
+/// (`${{ toJSON(secrets) }}`). Returns null when the caller didn't declare
+/// secrets, which means "do not capture the environment at all".
+function secretValues() {
+  const raw = core.getInput("secrets").trim();
+  if (!raw) {
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    core.warning(
+      "[rewindr] Could not parse the `secrets` input; skipping env capture to stay safe.",
+    );
+    return null;
+  }
+  // Longest first, so a secret that contains another is redacted whole.
+  return Object.values(parsed)
+    .filter((v) => typeof v === "string" && v.length >= MIN_SECRET_LENGTH)
+    .sort((a, b) => b.length - a.length);
+}
+
+/// `KEY=VALUE` lines for every env var, with secret values redacted. Drops our
+/// own `INPUT_*` vars — they hold the raw secrets/token and aren't part of the
+/// run environment we're reproducing.
+function renderEnv(secrets) {
+  return Object.entries(process.env)
+    .filter(([key]) => !key.startsWith("INPUT_"))
+    .map(([key, value]) => `${key}=${redact(value, secrets)}`)
+    .join("\n");
+}
+
+function redact(value, secrets) {
+  let out = value;
+  for (const secret of secrets) {
+    if (out.includes(secret)) {
+      out = out.split(secret).join("***");
+    }
+  }
+  return out;
+}
+
+function buildManifest(envCaptured) {
+  const env = process.env;
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    createdAt: new Date().toISOString(),
+    envCaptured,
+    secretsRedacted: envCaptured,
+    repository: env.GITHUB_REPOSITORY,
+    sha: env.GITHUB_SHA,
+    ref: env.GITHUB_REF,
+    workflow: env.GITHUB_WORKFLOW,
+    workflowPath: workflowPath(env),
+    job: env.GITHUB_JOB,
+    runId: env.GITHUB_RUN_ID,
+    runNumber: env.GITHUB_RUN_NUMBER,
+    actor: env.GITHUB_ACTOR,
+    eventName: env.GITHUB_EVENT_NAME,
+    // The original workspace path lets the CLI mount the code where the run
+    // expected it, so absolute paths and $GITHUB_WORKSPACE keep resolving.
+    workspacePath: env.GITHUB_WORKSPACE,
+    runner: {
+      os: env.RUNNER_OS,
+      arch: env.RUNNER_ARCH,
+      imageOS: env.ImageOS,
+      imageVersion: env.ImageVersion,
+    },
+  };
+}
+
+/// The legacy github_context.json shape, derived from the manifest. Transitional
+/// (see the call site); drop alongside the CLI's github_context.json reader.
+function legacyContext(manifest) {
+  return {
+    runId: manifest.runId,
+    runNumber: manifest.runNumber,
+    job: manifest.job,
+    workflow: manifest.workflow,
+    actor: manifest.actor,
+    repository: manifest.repository,
+    ref: manifest.ref,
+    sha: manifest.sha,
+    eventName: manifest.eventName,
+  };
+}
+
+/// GITHUB_WORKFLOW_REF looks like "owner/repo/.github/workflows/ci.yml@ref";
+/// strip the repo prefix and the trailing git ref. The file itself lives in the
+/// workspace tarball — this just points at it.
+function workflowPath(env) {
+  const ref = env.GITHUB_WORKFLOW_REF;
+  if (!ref) {
+    return null;
+  }
+  const withoutRef = ref.split("@")[0];
+  const prefix = `${env.GITHUB_REPOSITORY}/`;
+  return withoutRef.startsWith(prefix)
+    ? withoutRef.slice(prefix.length)
+    : withoutRef;
+}
+
 run();
