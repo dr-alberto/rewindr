@@ -2,9 +2,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use serde::Deserialize;
+
 /// Files every rewindr artifact carries (see src/post.js).
 const REQUIRED_FILES: [&str; 3] =
-  ["env_dump.txt", "github_context.json", "workspace_dump.tar.gz"];
+  ["rewindr.json", "env_dump.txt", "workspace_dump.tar.gz"];
+
+/// Highest manifest schemaVersion this CLI understands.
+const SUPPORTED_SCHEMA: u32 = 1;
 
 /// Directory `download` extracts artifacts into, searched when no path is given.
 const ARTIFACTS_DIR: &str = "rewindr-artifacts";
@@ -16,6 +21,30 @@ const ENV_DENYLIST: &[&str] =
 
 /// Where the workspace is mounted when the run's original path is unknown.
 const FALLBACK_WORKSPACE: &str = "/workspace";
+
+/// The subset of `rewindr.json` the CLI needs to rebuild the environment.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Manifest {
+  schema_version: u32,
+  repository: Option<String>,
+  sha: Option<String>,
+  workflow: Option<String>,
+  job: Option<String>,
+  workspace_path: Option<String>,
+  #[serde(default)]
+  env_captured: bool,
+  #[serde(default)]
+  secrets_redacted: bool,
+  #[serde(default)]
+  runner: Runner,
+}
+
+#[derive(Deserialize, Default)]
+struct Runner {
+  #[serde(rename = "imageOS")]
+  image_os: Option<String>,
+}
 
 pub fn run(dir: Option<String>, image: Option<String>, build_only: bool) {
   let dir = match resolve_dir(dir) {
@@ -48,7 +77,14 @@ pub fn run(dir: Option<String>, image: Option<String>, build_only: bool) {
     std::process::exit(1);
   }
 
-  print_context(&dir);
+  let manifest = match load_manifest(&dir) {
+    Ok(manifest) => manifest,
+    Err(e) => {
+      eprintln!("{e}");
+      std::process::exit(1);
+    }
+  };
+  print_context(&manifest);
 
   let workspace = dir.join("workspace");
   println!("▸ Unpacking workspace ...");
@@ -64,11 +100,11 @@ pub fn run(dir: Option<String>, image: Option<String>, build_only: bool) {
     std::process::exit(1);
   }
 
-  let image = image.unwrap_or_else(|| infer_image(&env));
+  let image = image.unwrap_or_else(|| infer_image(manifest.runner.image_os.as_deref()));
 
   // Mount the workspace at the run's *original* path so $GITHUB_WORKSPACE and
   // any scripts using absolute runner paths resolve correctly.
-  let mount_path = workspace_path(&env);
+  let mount_path = workspace_path(&manifest);
   let workspace = canonical(&workspace);
   let env_file = canonical(&env_file);
   let docker_args = [
@@ -122,22 +158,39 @@ fn resolve_dir(dir: Option<String>) -> Result<PathBuf, String> {
     .ok_or_else(|| format!("No artifacts found under ./{ARTIFACTS_DIR}. Run `rewindr download <id>` first."))
 }
 
-/// Best-effort — silently skips if the context file is absent or unparseable.
-fn print_context(dir: &Path) {
-  let Ok(raw) = fs::read_to_string(dir.join("github_context.json")) else {
-    return;
-  };
-  let Ok(ctx) = serde_json::from_str::<serde_json::Value>(&raw) else {
-    return;
-  };
-  let field = |key: &str| ctx.get(key).and_then(|v| v.as_str()).unwrap_or("?").to_string();
+/// Read and validate `rewindr.json`, rejecting artifacts newer than this CLI.
+fn load_manifest(dir: &Path) -> Result<Manifest, String> {
+  let raw = fs::read_to_string(dir.join("rewindr.json"))
+    .map_err(|e| format!("reading rewindr.json: {e}"))?;
+  let manifest: Manifest =
+    serde_json::from_str(&raw).map_err(|e| format!("parsing rewindr.json: {e}"))?;
+  if manifest.schema_version > SUPPORTED_SCHEMA {
+    return Err(format!(
+      "This artifact uses manifest schema v{} but this CLI supports v{SUPPORTED_SCHEMA}. Update rewindr.",
+      manifest.schema_version
+    ));
+  }
+  Ok(manifest)
+}
+
+/// Summarise the run being replayed and how complete the capture is.
+fn print_context(manifest: &Manifest) {
+  let field = |value: &Option<String>| value.clone().unwrap_or_else(|| "?".to_string());
+  let sha = field(&manifest.sha);
   println!(
     "▸ Replaying {} @ {} ({} / {})",
-    field("repository"),
-    &field("sha")[..field("sha").len().min(7)],
-    field("workflow"),
-    field("job"),
+    field(&manifest.repository),
+    &sha[..sha.len().min(7)],
+    field(&manifest.workflow),
+    field(&manifest.job),
   );
+  if !manifest.env_captured {
+    println!(
+      "  ⚠ Environment variables weren't captured (the action ran without the `secrets` input)."
+    );
+  } else if manifest.secrets_redacted {
+    println!("  Environment captured; secret values were redacted.");
+  }
 }
 
 fn unpack_workspace(dir: &Path, workspace: &Path) -> Result<(), String> {
@@ -182,13 +235,12 @@ fn write_env_file(env: &[(String, String)], path: &Path) -> Result<(), String> {
   fs::write(path, body).map_err(|e| e.to_string())
 }
 
-/// Pick a base image from the runner's `ImageOS`.
+/// Pick a base image from the runner's `imageOS`.
 ///
 /// Vanilla `ubuntu:*` images lack all of the tools GitHub preinstalls, so
 /// we use the catthehacker runner mirrors (the same images `act` uses) for a
 /// faithful rebuild. `--image` overrides this.
-fn infer_image(env: &[(String, String)]) -> String {
-  let image_os = env.iter().find(|(key, _)| key == "ImageOS").map(|(_, v)| v.as_str());
+fn infer_image(image_os: Option<&str>) -> String {
   match image_os {
     Some("ubuntu24") => "catthehacker/ubuntu:full-24.04",
     Some("ubuntu20") => "catthehacker/ubuntu:full-20.04",
@@ -199,11 +251,10 @@ fn infer_image(env: &[(String, String)]) -> String {
 
 /// The path to mount the workspace at inside the container: the run's original
 /// `GITHUB_WORKSPACE`, so absolute runner paths keep resolving.
-fn workspace_path(env: &[(String, String)]) -> String {
-  env
-    .iter()
-    .find(|(key, _)| key == "GITHUB_WORKSPACE")
-    .map(|(_, value)| value.clone())
+fn workspace_path(manifest: &Manifest) -> String {
+  manifest
+    .workspace_path
+    .clone()
     .filter(|value| value.starts_with('/'))
     .unwrap_or_else(|| FALLBACK_WORKSPACE.to_string())
 }

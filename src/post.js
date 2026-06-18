@@ -54,14 +54,6 @@ async function run() {
       JSON.stringify(manifest, null, 2),
     );
 
-    // github_context.json is a subset of the manifest, kept so the current CLI
-    // (which still reads it) accepts these artifacts. Removed once the CLI reads
-    // the manifest instead.
-    fs.writeFileSync(
-      path.join(dumpDir, "github_context.json"),
-      JSON.stringify(legacyContext(manifest), null, 2),
-    );
-
     // 4. Upload everything as a single artifact.
     core.info("[rewindr] Uploading state artifact...");
     const artifactName = `rewindr-state-${manifest.runId}-${manifest.job}`;
@@ -70,7 +62,6 @@ async function run() {
       artifactName,
       [
         path.join(dumpDir, "rewindr.json"),
-        path.join(dumpDir, "github_context.json"),
         path.join(dumpDir, "env_dump.txt"),
         tarPath,
       ],
@@ -159,22 +150,6 @@ function buildManifest(envCaptured) {
       imageOS: env.ImageOS,
       imageVersion: env.ImageVersion,
     },
-  };
-}
-
-/// The legacy github_context.json shape, derived from the manifest. Transitional
-/// (see the call site); drop alongside the CLI's github_context.json reader.
-function legacyContext(manifest) {
-  return {
-    runId: manifest.runId,
-    runNumber: manifest.runNumber,
-    job: manifest.job,
-    workflow: manifest.workflow,
-    actor: manifest.actor,
-    repository: manifest.repository,
-    ref: manifest.ref,
-    sha: manifest.sha,
-    eventName: manifest.eventName,
   };
 }
 
