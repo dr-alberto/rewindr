@@ -11,6 +11,13 @@ const SCHEMA_VERSION = 1;
 /// shredding unrelated text, so we don't capture env when a secret is that short.
 const MIN_SECRET_LENGTH = 4;
 
+/// Bearer tokens the runner injects itself. They aren't in the `secrets` context,
+/// so value-based redaction can't see them — we scrub them by their known names.
+const RUNNER_TOKEN_ENV = new Set([
+  "ACTIONS_RUNTIME_TOKEN",
+  "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+]);
+
 async function run() {
   try {
     // post-if: failure() in action.yml guarantees we only run when the job
@@ -110,7 +117,10 @@ function secretValues() {
 function renderEnv(secrets) {
   return Object.entries(process.env)
     .filter(([key]) => !key.startsWith("INPUT_"))
-    .map(([key, value]) => `${key}=${redact(value, secrets)}`)
+    .map(([key, value]) => {
+      const out = RUNNER_TOKEN_ENV.has(key) ? "***" : redact(value, secrets);
+      return `${key}=${out}`;
+    })
     .join("\n");
 }
 
