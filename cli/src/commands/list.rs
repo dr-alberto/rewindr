@@ -7,27 +7,8 @@ use crate::github::{self, ARTIFACT_PREFIX, Client};
 const PER_PAGE: &str = "100";
 
 pub fn run(limit: u32, workflow: Option<String>, repo: Option<String>) {
-  let token = match auth::token() {
-    Ok(Some(token)) => token,
-    Ok(None) => {
-      eprintln!("Not authenticated. Run `rewindr login` first.");
-      std::process::exit(1);
-    }
-    Err(e) => {
-      eprintln!("Failed to read stored token: {e}");
-      std::process::exit(1);
-    }
-  };
-
-  let repo = match repo.or_else(github::detect_repo) {
-    Some(repo) => repo,
-    None => {
-      eprintln!("Could not detect repository. Pass --repo owner/repo.");
-      std::process::exit(1);
-    }
-  };
-
-  let client = Client::new(token);
+  let client = Client::new(auth::require_token());
+  let repo = github::require_repo(repo);
 
   let runs_path = match &workflow {
     Some(workflow) => format!("/repos/{repo}/actions/workflows/{workflow}/runs"),

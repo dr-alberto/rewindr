@@ -67,3 +67,18 @@ pub fn token() -> Result<Option<String>, String> {
 pub fn fetch_user(token: &str) -> Result<crate::github::User, String> {
     crate::github::Client::new(token.to_string()).get("/user", &[])
 }
+
+/// Exits with guidance if no stored token is found.
+pub fn require_token() -> String {
+    match token() {
+        Ok(Some(token)) => token,
+        Ok(None) => {
+            eprintln!("Not authenticated. Run `rewindr login` first.");
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("Failed to read stored token: {e}");
+            std::process::exit(1);
+        }
+    }
+}

@@ -4,15 +4,12 @@ use std::process::{Command, Stdio};
 
 use serde::Deserialize;
 
-/// Files every rewindr artifact carries (see src/post.js).
-const REQUIRED_FILES: [&str; 3] =
-  ["rewindr.json", "env_dump.txt", "workspace_dump.tar.gz"];
+use crate::artifacts;
+use crate::auth;
+use crate::github::{self, Client};
 
 /// Highest manifest schemaVersion this CLI understands.
 const SUPPORTED_SCHEMA: u32 = 1;
-
-/// Directory `download` extracts artifacts into, searched when no path is given.
-const ARTIFACTS_DIR: &str = "rewindr-artifacts";
 
 /// Env vars that describe the *host* shell rather than the CI run; injecting
 /// them would point the container at paths and identities that don't exist.
@@ -46,21 +43,26 @@ struct Runner {
   image_os: Option<String>,
 }
 
-pub fn run(dir: Option<String>, image: Option<String>, build_only: bool) {
-  let dir = match resolve_dir(dir) {
-    Ok(dir) => dir,
-    Err(e) => {
-      eprintln!("{e}");
-      std::process::exit(1);
-    }
+pub fn run(
+  target: Option<String>,
+  repo: Option<String>,
+  image: Option<String>,
+  build_only: bool,
+  dir: Option<String>,
+) {
+  // Either play an explicit local directory, or resolve the run from the cache
+  // (downloading it on a miss).
+  let dir = match dir {
+    Some(dir) => local_dir(dir),
+    None => cached_dir(target, repo),
   };
 
   // Refuse anything that isn't a rewindr artifact rather than producing a
   // broken environment from a half-matching directory.
-  for file in REQUIRED_FILES {
+  for file in artifacts::ARTIFACT_FILES {
     if !dir.join(file).exists() {
       eprintln!("{} is not a rewindr artifact (missing {file}).", dir.display());
-      eprintln!("Expected files: {}", REQUIRED_FILES.join(", "));
+      eprintln!("Expected files: {}", artifacts::ARTIFACT_FILES.join(", "));
       std::process::exit(1);
     }
   }
@@ -133,29 +135,40 @@ pub fn run(dir: Option<String>, image: Option<String>, build_only: bool) {
   }
 }
 
-/// Resolve the artifact directory: the given path, or the most recently
-/// modified subdirectory of `./rewindr-artifacts`.
-fn resolve_dir(dir: Option<String>) -> Result<PathBuf, String> {
-  if let Some(dir) = dir {
-    let path = PathBuf::from(dir);
-    if !path.is_dir() {
-      return Err(format!("No such directory: {}", path.display()));
-    }
-    return Ok(path);
+/// Validate a user-provided local artifact directory (the `--dir` escape hatch).
+fn local_dir(dir: String) -> PathBuf {
+  let path = PathBuf::from(dir);
+  if !path.is_dir() {
+    eprintln!("No such directory: {}", path.display());
+    std::process::exit(1);
+  }
+  path
+}
+
+/// Resolve the run (default `latest`) and return its cache directory,
+/// downloading the artifact if it isn't cached yet.
+fn cached_dir(target: Option<String>, repo: Option<String>) -> PathBuf {
+  let client = Client::new(auth::require_token());
+  let repo = github::require_repo(repo);
+  let target = target.unwrap_or_else(|| "latest".to_string());
+
+  let run_id = artifacts::resolve_run_id(&client, &repo, &target).unwrap_or_else(|e| {
+    eprintln!("{e}");
+    std::process::exit(1);
+  });
+
+  let cache = artifacts::cache_dir(&repo, run_id).unwrap_or_else(|e| {
+    eprintln!("{e}");
+    std::process::exit(1);
+  });
+  if !artifacts::is_populated(&cache) {
+    println!("▸ Downloading rewindr artifact for run {run_id} ...");
   }
 
-  let base = Path::new(ARTIFACTS_DIR);
-  let entries = fs::read_dir(base).map_err(|_| {
-    format!("No directory given and ./{ARTIFACTS_DIR} not found. Run `rewindr download <id>` first, or pass a path.")
-  })?;
-
-  entries
-    .flatten()
-    .filter(|e| e.path().is_dir())
-    .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
-    .max_by_key(|(mtime, _)| *mtime)
-    .map(|(_, path)| path)
-    .ok_or_else(|| format!("No artifacts found under ./{ARTIFACTS_DIR}. Run `rewindr download <id>` first."))
+  artifacts::ensure_cached(&client, &repo, run_id).unwrap_or_else(|e| {
+    eprintln!("Download failed: {e}");
+    std::process::exit(1);
+  })
 }
 
 /// Read and validate `rewindr.json`, rejecting artifacts newer than this CLI.

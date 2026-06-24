@@ -111,6 +111,30 @@ pub struct ArtifactRun {
     pub id: u64,
 }
 
+/// Resolve `owner/repo` from the argument or the git remote, or exit.
+pub fn require_repo(repo: Option<String>) -> String {
+    match repo.or_else(detect_repo) {
+        Some(repo) => repo,
+        None => {
+            eprintln!("Could not detect repository. Pass --repo owner/repo.");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// The most recent run that has a rewindr artifact. Artifacts come back
+/// newest-first, so the first matching one points at the latest such run.
+pub fn latest_run_with_artifact(client: &Client, repo: &str) -> Result<u64, String> {
+    let artifacts: Artifacts =
+        client.get(&format!("/repos/{repo}/actions/artifacts"), &[("per_page", "100")])?;
+    artifacts
+        .artifacts
+        .iter()
+        .filter(|a| a.name.starts_with(ARTIFACT_PREFIX))
+        .find_map(|a| a.workflow_run.as_ref().map(|run| run.id))
+        .ok_or_else(|| format!("no rewindr artifacts found for {repo}"))
+}
+
 /// Detect the `owner/repo` slug from the `origin` git remote, if any.
 pub fn detect_repo() -> Option<String> {
     let output = Command::new("git")

@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand, Args};
 mod commands;
+mod artifacts;
 mod auth;
 mod github;
 
@@ -25,27 +26,30 @@ struct ListArgs {
 
 #[derive(Args)]
 struct DownloadArgs {
-  #[arg(help="Workflow run ID to download the rewindr artifact from")]
-  run_id: u64,
+  #[arg(help="Workflow run ID, or 'latest'")]
+  run_id: String,
 
   #[arg(short, long, help="Repository as owner/repo (auto-detected from git if omitted)")]
-  repo: Option<String>,
-
-  #[arg(short, long, help="Output directory (default: rewindr-artifacts/<run-id>)")]
-  out: Option<String>
+  repo: Option<String>
 }
 
 
 #[derive(Args)]
 struct PlayArgs {
-  #[arg(help="Extracted artifact directory (default: newest under ./rewindr-artifacts)")]
-  dir: Option<String>,
+  #[arg(help="Workflow run ID, or 'latest' (default: latest)")]
+  run_id: Option<String>,
+
+  #[arg(short, long, help="Repository as owner/repo (auto-detected from git if omitted)")]
+  repo: Option<String>,
 
   #[arg(short, long, help="Base Docker image (default: inferred from the runner image)")]
   image: Option<String>,
 
   #[arg(long, help="Prepare the environment and print the docker command without entering it")]
-  build_only: bool
+  build_only: bool,
+
+  #[arg(long, help="Play an already-extracted artifact directory instead of a run")]
+  dir: Option<String>
 }
 
 
@@ -70,8 +74,8 @@ fn main() {
 
     match command.command{
       Command::List(args)=>commands::list::run(args.limit, args.workflow, args.repo),
-      Command::Download(args)=>commands::download::run(args.run_id, args.repo, args.out),
-      Command::Play(args)=>commands::play::run(args.dir, args.image, args.build_only),
+      Command::Download(args)=>commands::download::run(args.run_id, args.repo),
+      Command::Play(args)=>commands::play::run(args.run_id, args.repo, args.image, args.build_only, args.dir),
       Command::Login=>commands::login::run(),
     }
 }
