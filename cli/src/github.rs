@@ -32,16 +32,15 @@ impl Client {
             .header("User-Agent", USER_AGENT)
     }
 
-    /// Perform an authenticated GET and decode the JSON response.
     pub fn get<T: DeserializeOwned>(&self, path: &str, params: &[(&str, &str)]) -> Result<T, String> {
         let response = self
             .request(path)
             .query(params)
             .send()
-            .map_err(|e| format!("request failed: {e}"))?;
+            .map_err(network_error)?;
 
         if !response.status().is_success() {
-            return Err(format!("GitHub returned {}", response.status()));
+            return Err(explain_status(response.status()));
         }
 
         response
@@ -49,24 +48,48 @@ impl Client {
             .map_err(|e| format!("decoding response: {e}"))
     }
 
-    /// Perform an authenticated GET and return the raw response bytes.
-    ///
-    /// Used for artifact downloads, where GitHub responds with a redirect to a
-    /// zip that the blocking client follows automatically.
+    /// GitHub responds with a redirect to a zip; the blocking client follows it automatically.
     pub fn get_bytes(&self, path: &str) -> Result<Vec<u8>, String> {
-        let response = self
-            .request(path)
-            .send()
-            .map_err(|e| format!("request failed: {e}"))?;
+        let response = self.request(path).send().map_err(network_error)?;
 
         if !response.status().is_success() {
-            return Err(format!("GitHub returned {}", response.status()));
+            return Err(explain_status(response.status()));
         }
 
         response
             .bytes()
             .map(|b| b.to_vec())
             .map_err(|e| format!("reading response body: {e}"))
+    }
+}
+
+fn network_error(e: reqwest::Error) -> String {
+    if e.is_timeout() {
+        "request to GitHub timed out".to_string()
+    } else if e.is_connect() {
+        "could not reach GitHub: check your network connection".to_string()
+    } else {
+        format!("request to GitHub failed: {e}")
+    }
+}
+
+fn explain_status(status: reqwest::StatusCode) -> String {
+    use reqwest::StatusCode;
+    match status {
+        StatusCode::UNAUTHORIZED => {
+            "authentication failed: your token may be invalid or expired; run `rewindr login`".to_string()
+        }
+        StatusCode::FORBIDDEN => {
+            "access denied: the token may lack permissions, or you've hit the GitHub API rate limit".to_string()
+        }
+        StatusCode::NOT_FOUND => {
+            "not found: check the repository name and run id, and that your token can read it".to_string()
+        }
+        StatusCode::GONE => {
+            "the artifact has expired: GitHub deletes run artifacts after their retention period".to_string()
+        }
+        s if s.is_server_error() => format!("GitHub had a server error ({s}); try again shortly"),
+        s => format!("GitHub returned {s}"),
     }
 }
 
@@ -135,7 +158,6 @@ pub fn latest_run_with_artifact(client: &Client, repo: &str) -> Result<u64, Stri
         .ok_or_else(|| format!("no rewindr artifacts found for {repo}"))
 }
 
-/// Detect the `owner/repo` slug from the `origin` git remote, if any.
 pub fn detect_repo() -> Option<String> {
     let output = Command::new("git")
         .args(["remote", "get-url", "origin"])
@@ -148,7 +170,6 @@ pub fn detect_repo() -> Option<String> {
     parse_repo(url.trim())
 }
 
-/// Extract `owner/repo` from an HTTPS or SSH GitHub remote URL.
 fn parse_repo(url: &str) -> Option<String> {
     let path = url
         .strip_prefix("git@github.com:")

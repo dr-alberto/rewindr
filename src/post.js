@@ -11,8 +11,8 @@ const SCHEMA_VERSION = 1;
 /// shredding unrelated text, so we don't capture env when a secret is that short.
 const MIN_SECRET_LENGTH = 4;
 
-/// Bearer tokens the runner injects itself. They aren't in the `secrets` context,
-/// so value-based redaction can't see them — we scrub them by their known names.
+// Bearer tokens the runner injects aren't in the `secrets` context,
+// so value-based redaction can't reach them; we scrub them by name instead.
 const RUNNER_TOKEN_ENV = new Set([
   "ACTIONS_RUNTIME_TOKEN",
   "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
@@ -21,7 +21,7 @@ const RUNNER_TOKEN_ENV = new Set([
 async function run() {
   try {
     // post-if: failure() in action.yml guarantees we only run when the job
-    // has failed — no API calls or extra permissions needed.
+    // has failed; no API calls or extra permissions needed.
     core.error("[rewindr] A failure has been detected in the CI environment!");
     core.info("[rewindr] Starting state freeze sequence...");
 
@@ -31,8 +31,8 @@ async function run() {
       fs.mkdirSync(dumpDir);
     }
 
-    // 1. Dump the environment — only if the caller declared their secrets so we
-    //    can scrub them. Without that we capture nothing, to never leak.
+    // 1. Dump the environment, but only if secrets were declared so we can scrub
+    //    them. No declaration = no capture, to avoid leaking.
     core.info("[rewindr] Dumping environment variables...");
     const secrets = secretValues();
     const envCaptured = secrets !== null;
@@ -88,9 +88,7 @@ const ENV_SKIPPED_NOTICE =
   "# Add `secrets: ${{ toJSON(secrets) }}` to the rewindr action to capture\n" +
   "# them with all secret values redacted.\n";
 
-/// The set of secret strings to scrub, taken from the `secrets` input
-/// (`${{ toJSON(secrets) }}`). Returns null when the caller didn't declare
-/// secrets, which means "do not capture the environment at all".
+// Returns null if the `secrets` input wasn't set, which means skip env capture entirely.
 function secretValues() {
   const raw = core.getInput("secrets").trim();
   if (!raw) {
@@ -111,9 +109,8 @@ function secretValues() {
     .sort((a, b) => b.length - a.length);
 }
 
-/// `KEY=VALUE` lines for every env var, with secret values redacted. Drops our
-/// own `INPUT_*` vars — they hold the raw secrets/token and aren't part of the
-/// run environment we're reproducing.
+// KEY=VALUE lines for every env var with secret values redacted.
+// Drops INPUT_* vars (they hold the raw secrets/token, not part of the CI run).
 function renderEnv(secrets) {
   return Object.entries(process.env)
     .filter(([key]) => !key.startsWith("INPUT_"))
@@ -163,9 +160,8 @@ function buildManifest(envCaptured) {
   };
 }
 
-/// GITHUB_WORKFLOW_REF looks like "owner/repo/.github/workflows/ci.yml@ref";
-/// strip the repo prefix and the trailing git ref. The file itself lives in the
-/// workspace tarball — this just points at it.
+// GITHUB_WORKFLOW_REF looks like "owner/repo/.github/workflows/ci.yml@ref";
+// strip the repo prefix and the @ref suffix. The file is in the tarball, this is just its path.
 function workflowPath(env) {
   const ref = env.GITHUB_WORKFLOW_REF;
   if (!ref) {

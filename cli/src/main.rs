@@ -36,7 +36,7 @@ struct DownloadArgs {
 
 #[derive(Args)]
 struct PlayArgs {
-  #[arg(help="Workflow run ID, or 'latest' (default: latest)")]
+  #[arg(help="Workflow run ID, or 'latest'")]
   run_id: Option<String>,
 
   #[arg(short, long, help="Repository as owner/repo (auto-detected from git if omitted)")]

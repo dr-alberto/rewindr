@@ -22,7 +22,7 @@ pub fn is_populated(dir: &Path) -> bool {
     ARTIFACT_FILES.iter().all(|file| dir.join(file).exists())
 }
 
-/// Resolve a target — `"latest"` or a numeric run id — to a concrete run id.
+/// Accepts `"latest"` or a numeric run id and resolves it to a concrete run id.
 pub fn resolve_run_id(client: &Client, repo: &str, target: &str) -> Result<u64, String> {
     if target.eq_ignore_ascii_case("latest") {
         return github::latest_run_with_artifact(client, repo);
@@ -53,15 +53,25 @@ fn download_into(client: &Client, repo: &str, run_id: u64, dir: &Path) -> Result
             format!("no rewindr artifact for run {run_id} (available: {names:?})")
         })?;
 
-    fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     let zip = client.get_bytes(&format!(
         "/repos/{repo}/actions/artifacts/{}/zip",
         artifact.id
     ))?;
     let mut archive =
         zip::ZipArchive::new(Cursor::new(zip)).map_err(|e| format!("reading artifact zip: {e}"))?;
+
+    // Extract to a temporary sibling and rename it into place; an interrupted
+    // download leaves nothing partial in the cache.
+    let parent = dir.parent().ok_or("invalid cache path")?;
+    fs::create_dir_all(parent).map_err(|e| format!("creating {}: {e}", parent.display()))?;
+    let staging = parent.join(format!(".{run_id}.partial"));
+    let _ = fs::remove_dir_all(&staging);
+    fs::create_dir_all(&staging).map_err(|e| format!("creating {}: {e}", staging.display()))?;
+
     archive
-        .extract(dir)
+        .extract(&staging)
         .map_err(|e| format!("extracting artifact: {e}"))?;
-    Ok(())
+
+    let _ = fs::remove_dir_all(dir);
+    fs::rename(&staging, dir).map_err(|e| format!("finalizing cache entry: {e}"))
 }

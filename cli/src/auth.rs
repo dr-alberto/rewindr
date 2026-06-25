@@ -63,7 +63,6 @@ pub fn token() -> Result<Option<String>, String> {
     Ok(load()?.github_token)
 }
 
-/// Validate a token by calling `GET /user`, returning the authenticated user.
 pub fn fetch_user(token: &str) -> Result<crate::github::User, String> {
     crate::github::Client::new(token.to_string()).get("/user", &[])
 }

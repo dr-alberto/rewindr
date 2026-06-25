@@ -51,10 +51,16 @@ pub fn run(
   dir: Option<String>,
 ) {
   // Either play an explicit local directory, or resolve the run from the cache
-  // (downloading it on a miss).
+  // (downloading it on a miss). A run id is required.
   let dir = match dir {
     Some(dir) => local_dir(dir),
-    None => cached_dir(target, repo),
+    None => match target {
+      Some(target) => cached_dir(target, repo),
+      None => {
+        eprintln!("Specify a run id or 'latest' (e.g. `rewindr play latest`), or pass --dir <path>.");
+        std::process::exit(1);
+      }
+    },
   };
 
   // Refuse anything that isn't a rewindr artifact rather than producing a
@@ -124,14 +130,40 @@ pub fn run(
     return;
   }
 
+  // Pull the image up front so a pull failure (or the large first-time download)
+  // is reported clearly, separately from the shell's own exit code.
+  if let Err(e) = ensure_image(&image) {
+    eprintln!("{e}");
+    std::process::exit(1);
+  }
+
   println!("▸ Launching {image} (workspace mounted at {mount_path}) ...\n");
   match Command::new("docker").args(docker_args).status() {
-    Ok(status) if status.success() => {}
-    Ok(_) => std::process::exit(1),
+    // A non-zero status here is the shell's own exit code, not our failure.
+    Ok(status) => std::process::exit(status.code().unwrap_or(0)),
     Err(e) => {
       eprintln!("Failed to run docker: {e}");
       std::process::exit(1);
     }
+  }
+}
+
+fn ensure_image(image: &str) -> Result<(), String> {
+  if ensure_available("docker", &["image", "inspect", image]).is_ok() {
+    return Ok(());
+  }
+  println!("▸ Pulling {image} ...");
+  println!("  (the default catthehacker images are large; the first pull can take a while)");
+  let status = Command::new("docker")
+    .args(["pull", image])
+    .status()
+    .map_err(|e| format!("running docker pull: {e}"))?;
+  if status.success() {
+    Ok(())
+  } else {
+    Err(format!(
+      "Failed to pull {image}. Check the image name (--image) and your network connection."
+    ))
   }
 }
 
@@ -145,12 +177,11 @@ fn local_dir(dir: String) -> PathBuf {
   path
 }
 
-/// Resolve the run (default `latest`) and return its cache directory,
+/// Resolve the run (id or `latest`) and return its cache directory,
 /// downloading the artifact if it isn't cached yet.
-fn cached_dir(target: Option<String>, repo: Option<String>) -> PathBuf {
+fn cached_dir(target: String, repo: Option<String>) -> PathBuf {
   let client = Client::new(auth::require_token());
   let repo = github::require_repo(repo);
-  let target = target.unwrap_or_else(|| "latest".to_string());
 
   let run_id = artifacts::resolve_run_id(&client, &repo, &target).unwrap_or_else(|e| {
     eprintln!("{e}");
@@ -186,7 +217,6 @@ fn load_manifest(dir: &Path) -> Result<Manifest, String> {
   Ok(manifest)
 }
 
-/// Summarise the run being replayed and how complete the capture is.
 fn print_context(manifest: &Manifest) {
   let field = |value: &Option<String>| value.clone().unwrap_or_else(|| "?".to_string());
   let sha = field(&manifest.sha);

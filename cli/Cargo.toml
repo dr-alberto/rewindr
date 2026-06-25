@@ -2,6 +2,7 @@
 name = "rewindr"
 version = "0.1.0"
 edition = "2024"
+description = "Rebuild and debug failed GitHub Actions CI environments locally"
 
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }
