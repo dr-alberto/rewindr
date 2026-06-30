@@ -5,7 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "npx --yes @vercel/ncc build src/main.js -o dist/main && npx --yes @vercel/ncc build src/post.js -o dist/post"
   },
   "keywords": [],
   "author": "",

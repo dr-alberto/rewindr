@@ -1,4 +1,5 @@
-name: rewindr
+name: "Rewindr CI Replay"
+description: "Capture a failed GitHub Actions job and rebuild its environment locally to debug it in a shell."
 
 inputs:
   github-token:
@@ -11,6 +12,6 @@ inputs:
     default: ""
 runs:
   using: "node24"
-  main: "src/main.js"
-  post: "src/post.js"
+  main: "dist/main/index.js"
+  post: "dist/post/index.js"
   post-if: failure()

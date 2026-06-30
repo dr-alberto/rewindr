@@ -38,7 +38,7 @@ on your machine, for as long as you need, without re-running anything.
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: dr-alberto/rewindr@v1
+- uses: dr-alberto/rewindr@v0.1.1
   with:
     # Lets rewindr redact secret values from the captured environment.
     secrets: ${{ toJSON(secrets) }}
