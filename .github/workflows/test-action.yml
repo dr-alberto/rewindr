@@ -5,7 +5,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./
+      - uses: dr-alberto/rewindr@v0.1.0
         with:
           # Lets rewindr redact secret values from the captured environment.
           secrets: ${{ toJSON(secrets) }}
