@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/rewindr-logo-black.svg" />
-    <img src="assets/rewindr-logo-light.svg" alt="rewindr" width="240" />
+    <source media="(prefers-color-scheme: dark)" srcset="assets/rewindr-logo-light.svg" />
+    <img src="assets/rewindr-logo-black.svg" alt="rewindr" width="240" />
   </picture>
 </p>
 
