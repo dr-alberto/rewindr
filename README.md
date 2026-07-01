@@ -38,7 +38,7 @@ on your machine, for as long as you need, without re-running anything.
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: dr-alberto/rewindr@v0.1.1
+- uses: dr-alberto/rewindr@v0.1.2
   with:
     # Lets rewindr redact secret values from the captured environment.
     secrets: ${{ toJSON(secrets) }}
@@ -52,9 +52,12 @@ untouched. This repo runs rewindr on its own CI if you want a working example:
 ### 2. Install the CLI
 
 ```bash
-git clone https://github.com/dr-alberto/rewindr
-cargo install --path rewindr/cli
+curl -fsSL https://raw.githubusercontent.com/dr-alberto/rewindr/main/install.sh | sh
 ```
+
+Installs to `/usr/local/bin` (or `~/.local/bin` if that isn't writable). Supports macOS and Linux on x86\_64 and arm64.
+
+Alternatively, download a binary directly from [Releases](https://github.com/dr-alberto/rewindr/releases).
 
 ### 3. Authenticate
 
